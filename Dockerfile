@@ -1,63 +1,59 @@
-ARG GOLANG_VERSION=1.17
-FROM golang:${GOLANG_VERSION}-bullseye as builder
+ARG GOLANG_VERSION=1.24
+# FROM golang:${GOLANG_VERSION}-bullseye as updater
+FROM tampler/imaginary-base:v0.0.1 AS updater
 
 ARG IMAGINARY_VERSION=dev
-ARG LIBVIPS_VERSION=8.12.2
-ARG GOLANGCILINT_VERSION=1.29.0
+ARG LIBVIPS_VERSION=8.16.0
 
-# Installs libvips + required libraries
+# Install required libraries
 RUN DEBIAN_FRONTEND=noninteractive \
   apt-get update && \
   apt-get install --no-install-recommends -y \
   ca-certificates \
-  automake build-essential curl \
+  build-essential curl \
   gobject-introspection gtk-doc-tools libglib2.0-dev libjpeg62-turbo-dev libpng-dev \
   libwebp-dev libtiff5-dev libgif-dev libexif-dev libxml2-dev libpoppler-glib-dev \
   swig libmagickwand-dev libpango1.0-dev libmatio-dev libopenslide-dev libcfitsio-dev \
-  libgsf-1-dev fftw3-dev liborc-0.4-dev librsvg2-dev libimagequant-dev libheif-dev && \
-  cd /tmp && \
-  curl -fsSLO https://github.com/libvips/libvips/releases/download/v${LIBVIPS_VERSION}/vips-${LIBVIPS_VERSION}.tar.gz && \
-  tar zvxf vips-${LIBVIPS_VERSION}.tar.gz && \
-  cd /tmp/vips-${LIBVIPS_VERSION} && \
-	CFLAGS="-g -O3" CXXFLAGS="-D_GLIBCXX_USE_CXX11_ABI=0 -g -O3" \
-    ./configure \
-    --disable-debug \
-    --disable-dependency-tracking \
-    --disable-introspection \
-    --disable-static \
-    --enable-gtk-doc-html=no \
-    --enable-gtk-doc=no \
-    --enable-pyvips8=no && \
-  make && \
-  make install && \
-  ldconfig
+  libgsf-1-dev fftw3-dev liborc-0.4-dev librsvg2-dev libimagequant-dev libheif-dev \
+  python3 python3-pip python3-setuptools python3-wheel ninja-build libgirepository1.0-dev
 
-# Installing golangci-lint
+# Build LibVIPS
+FROM updater AS builder
 WORKDIR /tmp
-RUN curl -fsSL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "${GOPATH}/bin" v${GOLANGCILINT_VERSION}
+
+# Install Meson
+RUN DEBIAN_FRONTEND=noninteractive \
+  apt install -y python3 python3-pip python3-setuptools python3-wheel ninja-build
+
+RUN pip3 install meson
+
+# Build project
+RUN \
+  curl -fsSLO https://github.com/libvips/libvips/releases/download/v${LIBVIPS_VERSION}/vips-${LIBVIPS_VERSION}.tar.xz && \
+  tar xf vips-${LIBVIPS_VERSION}.tar.xz && \
+  cd ./vips-${LIBVIPS_VERSION} && \
+  meson setup builddir && cd builddir && \
+  meson compile && \
+  meson test && \
+  meson install
 
 WORKDIR ${GOPATH}/src/github.com/h2non/imaginary
 
 # Cache go modules
-ENV GO111MODULE=on
+ENV GO111MODULE on
 
-COPY go.mod .
-COPY go.sum .
+COPY go.mod go.sum ./
 
 RUN go mod download
 
 # Copy imaginary sources
 COPY . .
 
-# Run quality control
-RUN go test ./... -test.v -race -test.coverprofile=atomic .
-RUN golangci-lint run .
-
 # Compile imaginary
 RUN go build -a \
     -o ${GOPATH}/bin/imaginary \
     -ldflags="-s -w -h -X main.Version=${IMAGINARY_VERSION}" \
-    github.com/h2non/imaginary
+    .
 
 FROM debian:bullseye-slim
 
