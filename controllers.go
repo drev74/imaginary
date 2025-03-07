@@ -20,10 +20,12 @@ func indexController(o ServerOptions) func(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
+		libvips := bimg.VipsVersion
+
 		body, _ := json.Marshal(Versions{
 			Version,
 			bimg.Version,
-			bimg.VipsVersion,
+			&libvips,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
